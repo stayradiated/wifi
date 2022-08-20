@@ -126,14 +126,14 @@ func main() {
 		networkId := lastLine(wpaCli("add_network"))
 
 		ssid := os.Args[2]
-		psk := os.Args[3]
 
 		assertOK(
 			wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", ssid)))
 
-		if len(psk) == 0 {
+		if len(os.Args) == 3 {
 			assertOK(wpaCli("set_network", networkId, "key_mgmt", "NONE"))
 		} else {
+      psk := os.Args[3]
 			assertOK(wpaCli("set_network", networkId, "psk", fmt.Sprintf("\\\"%s\\\"", psk)))
 		}
 
