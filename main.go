@@ -57,7 +57,12 @@ type Network struct {
 }
 
 func isNetworkSecured(flags map[string]bool) bool {
-	return flags["WPA2-EAP-CCMP"] || flags["WPA2-PSK-CCMP"] || flags["WPA-PSK-CCMP+TKIP"]
+	for key := range flags {
+		if strings.HasPrefix(key, "WPA2-") || strings.HasPrefix(key, "WPA-") || strings.HasPrefix(key, "RSN-") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseNetworkFlags(input string) map[string]bool {
@@ -133,7 +138,7 @@ func main() {
 		if len(os.Args) == 3 {
 			assertOK(wpaCli("set_network", networkId, "key_mgmt", "NONE"))
 		} else {
-      psk := os.Args[3]
+			psk := os.Args[3]
 			assertOK(wpaCli("set_network", networkId, "psk", fmt.Sprintf("\\\"%s\\\"", psk)))
 		}
 
