@@ -47,6 +47,36 @@ func assertOK(input string) {
 	}
 }
 
+type SavedNetwork struct {
+	networkId int
+	ssid      string
+	bssid     string
+	flags     map[string]bool
+}
+
+func parseListNetworkResults(input string) []SavedNetwork {
+	networks := []SavedNetwork{}
+	lines := removeEmptyLines(strings.Split(input, "\n")[2:])
+	for i := range lines {
+		line := lines[i]
+		chunks := strings.Split(line, "\t")
+		flags := parseNetworkFlags(chunks[3])
+
+		networkId, err := strconv.Atoi(chunks[0])
+		if err != nil {
+			panic(err)
+		}
+
+		networks = append(networks, SavedNetwork{
+			networkId: networkId,
+			ssid:      chunks[1],
+			bssid:     chunks[2],
+			flags:     flags,
+		})
+	}
+	return networks
+}
+
 type Network struct {
 	bssid       string
 	frequency   string
@@ -113,7 +143,14 @@ func main() {
 	case "restart":
 
 	case "list":
-		fmt.Print(wpaCli("list_networks"))
+		networkList := parseListNetworkResults(wpaCli("list_network"))
+		for _, network := range networkList {
+			status := " "
+			if network.flags["DISABLED"] {
+				status = "x"
+			}
+			fmt.Printf(" %s %3d %s\n", status, network.networkId, network.ssid)
+		}
 
 	case "disable":
 		networkId := os.Args[2]
@@ -126,6 +163,19 @@ func main() {
 	case "remove":
 		networkId := os.Args[2]
 		fmt.Print(wpaCli("remove_network", networkId))
+
+	case "toggle":
+		networkId := os.Args[2]
+		networkList := parseListNetworkResults(wpaCli("list_network"))
+		for _, network := range networkList {
+			if strconv.Itoa(network.networkId) == networkId {
+				if network.flags["DISABLED"] {
+					fmt.Print(wpaCli("enable_network", networkId))
+				} else {
+					fmt.Print(wpaCli("disable_network", networkId))
+				}
+			}
+		}
 
 	case "join":
 		networkId := lastLine(wpaCli("add_network"))
