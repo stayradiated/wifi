@@ -134,20 +134,24 @@ func parseScanResults(input string) []Network {
 }
 
 func main() {
-	switch os.Args[1] {
+  command := ""
+  if len(os.Args) >= 2 {
+    command = os.Args[1]
+  }
+
+	switch command {
 	case "status":
 		fmt.Print(wpaCli("status"))
-
-	case "edit":
-
-	case "restart":
 
 	case "list":
 		networkList := parseListNetworkResults(wpaCli("list_network"))
 		for _, network := range networkList {
 			status := " "
 			if network.flags["DISABLED"] {
-				status = "x"
+				status = "×"
+			}
+			if network.flags["TEMP-DISABLED"] {
+				status = "¤"
 			}
 			fmt.Printf(" %s %3d %s\n", status, network.networkId, network.ssid)
 		}
@@ -177,7 +181,7 @@ func main() {
 			}
 		}
 
-	case "join":
+	case "add":
 		networkId := lastLine(wpaCli("add_network"))
 
 		ssid := os.Args[2]
@@ -218,5 +222,20 @@ func main() {
 
 			fmt.Println(networkSignalIcon, networkIcon, networkSsid)
 		}
+
+  default:
+    if len(command) > 0 {
+      fmt.Printf("Invalid command: %s\n", command)
+    }
+
+    fmt.Println("wifi <command>")
+    fmt.Println("     status")
+    fmt.Println("     scan")
+    fmt.Println("     add")
+    fmt.Println("     remove")
+    fmt.Println("     list")
+    fmt.Println("     disable")
+    fmt.Println("     enable")
+    fmt.Println("     toggle")
 	}
 }
