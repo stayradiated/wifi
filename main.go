@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -134,10 +135,15 @@ func parseScanResults(input string) []Network {
 }
 
 func main() {
-  command := ""
-  if len(os.Args) >= 2 {
-    command = os.Args[1]
-  }
+	var filterByOpen bool
+	flag.BoolVar(&filterByOpen, "open", false, "only list open networks")
+	flag.Parse()
+
+	command := ""
+	args := flag.Args()
+	if len(args) >= 1 {
+		command = args[0]
+	}
 
 	switch command {
 	case "status":
@@ -205,6 +211,11 @@ func main() {
 
 		for i := range networks {
 			network := networks[i]
+
+			if filterByOpen && network.isSecured {
+				continue
+			}
+
 			networkIcon := "🔓"
 			if network.isSecured {
 				networkIcon = "🔑"
@@ -219,23 +230,22 @@ func main() {
 			}
 
 			networkSsid := fmt.Sprintf("\u001B[45m%s\u001B[49m", network.ssid)
-
 			fmt.Println(networkSignalIcon, networkIcon, networkSsid)
 		}
 
-  default:
-    if len(command) > 0 {
-      fmt.Printf("Invalid command: %s\n", command)
-    }
+	default:
+		if len(command) > 0 {
+			fmt.Printf("Invalid command: %s\n", command)
+		}
 
-    fmt.Println("wifi <command>")
-    fmt.Println("     status")
-    fmt.Println("     scan")
-    fmt.Println("     add")
-    fmt.Println("     remove")
-    fmt.Println("     list")
-    fmt.Println("     disable")
-    fmt.Println("     enable")
-    fmt.Println("     toggle")
+		fmt.Println("wifi <command>")
+		fmt.Println("     status")
+		fmt.Println("     scan")
+		fmt.Println("     add")
+		fmt.Println("     remove")
+		fmt.Println("     list")
+		fmt.Println("     disable")
+		fmt.Println("     enable")
+		fmt.Println("     toggle")
 	}
 }
