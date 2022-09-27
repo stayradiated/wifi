@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func wpaCli(args ...string) string {
@@ -149,6 +150,17 @@ func main() {
 	case "status":
 		fmt.Print(wpaCli("status"))
 
+	case "watch":
+		previousStatus := ""
+		for {
+			status := wpaCli("status")
+			if status != previousStatus {
+				fmt.Print(status)
+			}
+			previousStatus = status
+			time.Sleep(1 * time.Second)
+		}
+
 	case "list":
 		networkList := parseListNetworkResults(wpaCli("list_network"))
 		for _, network := range networkList {
@@ -240,6 +252,7 @@ func main() {
 
 		fmt.Println("wifi <command>")
 		fmt.Println("     status")
+		fmt.Println("     watch")
 		fmt.Println("     scan")
 		fmt.Println("     add")
 		fmt.Println("     remove")
