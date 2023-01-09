@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,10 +72,13 @@ func parseListNetworkResults(input string) []SavedNetwork {
 			panic(err)
 		}
 
+		ssid := chunks[1]
+		bssid := chunks[2]
+
 		networks = append(networks, SavedNetwork{
 			networkId: networkId,
-			ssid:      chunks[1],
-			bssid:     chunks[2],
+			ssid:      ssid,
+			bssid:     bssid,
 			flags:     flags,
 		})
 	}
@@ -80,6 +86,7 @@ func parseListNetworkResults(input string) []SavedNetwork {
 }
 
 type Network struct {
+	shortCode   string
 	bssid       string
 	frequency   string
 	signalLevel int
@@ -95,6 +102,15 @@ func isNetworkSecured(flags map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+func getShortCode(input string) (shortCode string, err error) {
+	hash := sha256.New()
+	if _, err = hash.Write([]byte(input)); err != nil {
+		return "", err
+	}
+	shortCode = fmt.Sprintf("%x", hash.Sum(nil))[0:3]
+	return shortCode, nil
 }
 
 func parseNetworkFlags(input string) map[string]bool {
@@ -120,7 +136,13 @@ func parseScanResults(input string) []Network {
 			panic(err)
 		}
 
+		shortCode, err := getShortCode(chunks[4])
+		if err != nil {
+			panic(err)
+		}
+
 		networks = append(networks, Network{
+			shortCode:   shortCode,
 			bssid:       chunks[0],
 			frequency:   chunks[1],
 			signalLevel: signalLevel,
@@ -133,6 +155,21 @@ func parseScanResults(input string) []Network {
 		return networks[p].signalLevel > networks[q].signalLevel
 	})
 	return networks
+}
+
+var isShortCodeRegExp = regexp.MustCompile("^[A-f0-9]{3}$")
+
+func isShortCode(input string) bool {
+	return isShortCodeRegExp.MatchString(input)
+}
+func resolveShortCode(shortCode string) (string, error) {
+	networks := parseScanResults(wpaCli("scan_results"))
+	for _, network := range networks {
+		if network.shortCode == shortCode {
+			return network.ssid, nil
+		}
+	}
+	return "", errors.New("Could not resolve shortCode")
 }
 
 func main() {
@@ -204,6 +241,14 @@ func main() {
 
 		ssid := os.Args[2]
 
+		if isShortCode(ssid) {
+			resolveddShortCode, err := resolveShortCode(ssid)
+			if err != nil {
+				panic(err)
+			}
+			ssid = resolveddShortCode
+		}
+
 		assertOK(
 			wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", ssid)))
 
@@ -241,8 +286,7 @@ func main() {
 				networkSignalIcon = "░"
 			}
 
-			networkSsid := fmt.Sprintf("\u001B[45m%s\u001B[49m", network.ssid)
-			fmt.Println(networkSignalIcon, networkIcon, networkSsid)
+			fmt.Println(network.shortCode, networkSignalIcon, networkIcon, network.ssid)
 		}
 
 	default:
