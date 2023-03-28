@@ -249,8 +249,10 @@ func main() {
 			ssid = resolveddShortCode
 		}
 
+		escapedSsid := strings.ReplaceAll(ssid, "'", "\\'")
+
 		assertOK(
-			wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", ssid)))
+			wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", escapedSsid)))
 
 		if len(os.Args) == 3 {
 			assertOK(wpaCli("set_network", networkId, "key_mgmt", "NONE"))
