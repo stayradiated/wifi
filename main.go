@@ -253,6 +253,7 @@ func main() {
 		escapedSsid = strings.ReplaceAll(escapedSsid, "'", "\\'")
 		escapedSsid = strings.ReplaceAll(escapedSsid, "(", "\\(")
 		escapedSsid = strings.ReplaceAll(escapedSsid, ")", "\\)")
+		escapedSsid = strings.ReplaceAll(escapedSsid, "&", "\\&")
 
 		assertOK(
 			wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", escapedSsid)))
