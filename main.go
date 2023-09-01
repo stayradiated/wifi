@@ -52,6 +52,15 @@ func assertOK(input string) {
 	}
 }
 
+func escapeString(input string) string {
+	input = strings.ReplaceAll(input, "\\", "\\\\")
+	input = strings.ReplaceAll(input, "'", "\\'")
+	input = strings.ReplaceAll(input, "(", "\\(")
+	input = strings.ReplaceAll(input, ")", "\\)")
+	input = strings.ReplaceAll(input, "&", "\\&")
+	return input
+}
+
 type SavedNetwork struct {
 	networkId int
 	ssid      string
@@ -249,11 +258,7 @@ func main() {
 			ssid = resolveddShortCode
 		}
 
-		escapedSsid := strings.ReplaceAll(ssid, "\\", "\\\\")
-		escapedSsid = strings.ReplaceAll(escapedSsid, "'", "\\'")
-		escapedSsid = strings.ReplaceAll(escapedSsid, "(", "\\(")
-		escapedSsid = strings.ReplaceAll(escapedSsid, ")", "\\)")
-		escapedSsid = strings.ReplaceAll(escapedSsid, "&", "\\&")
+		escapedSsid := escapeString(ssid)
 
 		assertOK(
 			wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", escapedSsid)))
@@ -261,7 +266,7 @@ func main() {
 		if len(os.Args) == 3 {
 			assertOK(wpaCli("set_network", networkId, "key_mgmt", "NONE"))
 		} else {
-			psk := os.Args[3]
+			psk := escapeString(os.Args[3])
 			assertOK(wpaCli("set_network", networkId, "psk", fmt.Sprintf("\\\"%s\\\"", psk)))
 		}
 
