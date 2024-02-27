@@ -228,6 +228,12 @@ func main() {
 		networkId := os.Args[2]
 		fmt.Print(wpaCli("enable_network", networkId))
 
+  case "disconnect":
+    networkId := os.Args[2]
+		fmt.Print(wpaCli("disable_network", networkId))
+    time.Sleep(1 * time.Second)
+		fmt.Print(wpaCli("enable_network", networkId))
+
 	case "remove":
 		networkId := os.Args[2]
 		fmt.Print(wpaCli("remove_network", networkId))
