@@ -35,10 +35,9 @@ type SavedNetwork struct {
 
 // Execute wpa_cli command with the provided arguments
 func wpaCli(args ...string) (string, error) {
-	wpaCliArgs := append([]string{"wpa_cli"}, args...)
 	fmt.Println("» wpa_cli", strings.Join(args, " "))
 
-	cmd := exec.Command("as-host", wpaCliArgs...)
+	cmd := exec.Command("wpa_cli", args...)
 
 	output, err := cmd.Output()
 	if err != nil {
