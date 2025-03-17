@@ -103,12 +103,14 @@ func escapeString(input string) string {
 // parseNetworkFlags parses network flags from a string
 func parseNetworkFlags(input string) map[string]bool {
 	flagMap := map[string]bool{}
+
 	list := strings.Split(strings.Trim(input, "[]"), "][")
 	for _, flag := range list {
 		if flag != "" {
 			flagMap[flag] = true
 		}
 	}
+
 	return flagMap
 }
 
@@ -132,40 +134,33 @@ func getShortCode(input string) (string, error) {
 	return shortCode, nil
 }
 
-// parseListNetworkResults parses the output of list_network command
-func parseListNetworkResults(input string) ([]SavedNetwork, error) {
-	networks := []SavedNetwork{}
-	lines := removeEmptyLines(strings.Split(input, "\n"))
-
-	// Need at least 3 lines (including header) to have valid data
-	if len(lines) < 3 {
-		return networks, nil
+// unescapeSSID decodes SSID strings that contain escaped UTF-8 sequences
+func unescapeSSID(input string) string {
+	// If there are no escape sequences, return the input as is
+	if !strings.Contains(input, "\\x") {
+		return input
 	}
 
-	for _, line := range lines[2:] {
-		chunks := strings.Split(line, "\t")
-		if len(chunks) < 4 {
-			continue
+	// Replace all escape sequences
+	var result strings.Builder
+	i := 0
+	for i < len(input) {
+		if i+3 < len(input) && input[i] == '\\' && input[i+1] == 'x' {
+			// Try to parse the hex value
+			hexStr := input[i+2 : i+4]
+			if val, err := strconv.ParseUint(hexStr, 16, 8); err == nil {
+				result.WriteByte(byte(val))
+				i += 4
+				continue
+			}
 		}
 
-		flags := parseNetworkFlags(chunks[3])
-
-		networkId, err := strconv.Atoi(chunks[0])
-		if err != nil {
-			return nil, fmt.Errorf("invalid network ID: %s", chunks[0])
-		}
-
-		ssid := chunks[1]
-		bssid := chunks[2]
-
-		networks = append(networks, SavedNetwork{
-			networkId: networkId,
-			ssid:      ssid,
-			bssid:     bssid,
-			flags:     flags,
-		})
+		// If not an escape sequence, add the character as is
+		result.WriteByte(input[i])
+		i++
 	}
-	return networks, nil
+
+	return result.String()
 }
 
 // parseScanResults parses the output of scan_results command
@@ -191,7 +186,11 @@ func parseScanResults(input string) ([]Network, error) {
 			return nil, fmt.Errorf("invalid signal level: %s", chunks[2])
 		}
 
-		shortCode, err := getShortCode(chunks[4])
+		// Get the SSID and unescape it if needed
+		ssid := chunks[4]
+		ssid = unescapeSSID(ssid)
+
+		shortCode, err := getShortCode(ssid)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate short code: %w", err)
 		}
@@ -203,7 +202,7 @@ func parseScanResults(input string) ([]Network, error) {
 			signalLevel: signalLevel,
 			flags:       flags,
 			isSecured:   isNetworkSecured(flags),
-			ssid:        chunks[4],
+			ssid:        ssid,
 		})
 	}
 
@@ -212,6 +211,45 @@ func parseScanResults(input string) ([]Network, error) {
 		return networks[p].signalLevel > networks[q].signalLevel
 	})
 
+	return networks, nil
+}
+
+// parseListNetworkResults parses the output of list_network command
+func parseListNetworkResults(input string) ([]SavedNetwork, error) {
+	networks := []SavedNetwork{}
+	lines := removeEmptyLines(strings.Split(input, "\n"))
+
+	// Need at least 3 lines (including header) to have valid data
+	if len(lines) < 3 {
+		return networks, nil
+	}
+
+	for _, line := range lines[2:] {
+		chunks := strings.Split(line, "\t")
+		if len(chunks) < 4 {
+			continue
+		}
+
+		flags := parseNetworkFlags(chunks[3])
+
+		networkId, err := strconv.Atoi(chunks[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid network ID: %s", chunks[0])
+		}
+
+		// Get the SSID and unescape it if needed
+		ssid := chunks[1]
+		ssid = unescapeSSID(ssid)
+
+		bssid := chunks[2]
+
+		networks = append(networks, SavedNetwork{
+			networkId: networkId,
+			ssid:      ssid,
+			bssid:     bssid,
+			flags:     flags,
+		})
+	}
 	return networks, nil
 }
 
@@ -242,6 +280,141 @@ func resolveShortCode(shortCode string) (string, error) {
 	return "", errors.New("could not resolve shortCode")
 }
 
+// prettyPrintStatus formats the raw wpa_cli status output in a more readable way
+func prettyPrintStatus(statusOutput string) string {
+	lines := removeEmptyLines(strings.Split(statusOutput, "\n"))
+
+	// Extract interface from first line if present
+	interfaceLine := ""
+	remainingLines := lines
+	if len(lines) > 0 && strings.HasPrefix(lines[0], "Selected interface") {
+		interfaceLine = lines[0]
+		remainingLines = lines[1:]
+	}
+
+	// Parse key-value pairs
+	statusMap := make(map[string]string)
+	for _, line := range remainingLines {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := parts[0]
+			value := parts[1]
+			statusMap[key] = value
+		}
+	}
+
+	// Start building pretty output
+	var pretty strings.Builder
+
+	if interfaceLine != "" {
+		pretty.WriteString(fmt.Sprintf("📶 %s\n", interfaceLine))
+		pretty.WriteString(strings.Repeat("─", 60) + "\n")
+	}
+
+	// Connection Status
+	wpaState := statusMap["wpa_state"]
+	if wpaState == "COMPLETED" {
+		pretty.WriteString("✅ Connected\n")
+	} else if wpaState != "" {
+		pretty.WriteString(fmt.Sprintf("❓ Status: %s\n", wpaState))
+	}
+
+	// Network Information
+	if ssid := statusMap["ssid"]; ssid != "" {
+		pretty.WriteString(fmt.Sprintf("🌐 Network: %s\n", unescapeSSID(ssid)))
+	}
+
+	if id, ok := statusMap["id"]; ok {
+		pretty.WriteString(fmt.Sprintf("🔢 Network ID: %s\n", id))
+	}
+
+	if bssid := statusMap["bssid"]; bssid != "" {
+		pretty.WriteString(fmt.Sprintf("📍 BSSID: %s\n", bssid))
+	}
+
+	// Security Information
+	if keyMgmt := statusMap["key_mgmt"]; keyMgmt != "" {
+		pretty.WriteString(fmt.Sprintf("🔐 Security: %s\n", keyMgmt))
+	}
+
+	// Encryption
+	encDetails := []string{}
+	if pairwise := statusMap["pairwise_cipher"]; pairwise != "" {
+		encDetails = append(encDetails, fmt.Sprintf("pairwise: %s", pairwise))
+	}
+	if group := statusMap["group_cipher"]; group != "" {
+		encDetails = append(encDetails, fmt.Sprintf("group: %s", group))
+	}
+
+	if len(encDetails) > 0 {
+		pretty.WriteString(fmt.Sprintf("🔒 Encryption: %s\n", strings.Join(encDetails, ", ")))
+	}
+
+	// Frequency & Signal
+	if freq := statusMap["freq"]; freq != "" {
+		freqInt, err := strconv.Atoi(freq)
+		if err == nil {
+			band := "2.4 GHz"
+			if freqInt > 3000 {
+				band = "5 GHz"
+			}
+			pretty.WriteString(fmt.Sprintf("📡 Frequency: %s MHz (%s)\n", freq, band))
+		} else {
+			pretty.WriteString(fmt.Sprintf("📡 Frequency: %s MHz\n", freq))
+		}
+	}
+
+	// IP Information
+	if ip := statusMap["ip_address"]; ip != "" {
+		pretty.WriteString(fmt.Sprintf("🌍 IP Address: %s\n", ip))
+	}
+
+	// Device Details
+	deviceDetails := []string{}
+	if addr := statusMap["address"]; addr != "" {
+		deviceDetails = append(deviceDetails, fmt.Sprintf("MAC: %s", addr))
+	}
+	if gen := statusMap["wifi_generation"]; gen != "" {
+		deviceDetails = append(deviceDetails, fmt.Sprintf("WiFi %s", gen))
+	}
+	if len(deviceDetails) > 0 {
+		pretty.WriteString(fmt.Sprintf("💻 Device: %s\n", strings.Join(deviceDetails, ", ")))
+	}
+
+	// Other potentially useful information
+	if uuid := statusMap["uuid"]; uuid != "" {
+		pretty.WriteString(fmt.Sprintf("🆔 UUID: %s\n", uuid))
+	}
+
+	// Show any additional fields
+	pretty.WriteString("\n" + strings.Repeat("─", 60) + "\n")
+	pretty.WriteString("Additional Details:\n")
+
+	// Sort the keys for consistent display
+	var keys []string
+	for k := range statusMap {
+		// Skip keys we've already displayed
+		if k == "ssid" || k == "bssid" || k == "wpa_state" || k == "id" ||
+			k == "key_mgmt" || k == "pairwise_cipher" || k == "group_cipher" ||
+			k == "freq" || k == "ip_address" || k == "address" ||
+			k == "wifi_generation" || k == "uuid" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := statusMap[k]
+		if strings.HasPrefix(v, "\\x") {
+			v = unescapeSSID(v)
+		}
+		pretty.WriteString(fmt.Sprintf("  %s: %s\n", k, v))
+	}
+
+	return pretty.String()
+}
+
 func main() {
 	var filterByOpen bool
 	flag.BoolVar(&filterByOpen, "open", false, "only list open networks")
@@ -260,7 +433,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Print(output)
+		fmt.Print(prettyPrintStatus(output))
 
 	case "watch":
 		previousStatus := ""
@@ -273,7 +446,7 @@ func main() {
 			}
 
 			if status != previousStatus {
-				fmt.Print(status)
+				fmt.Print(prettyPrintStatus(status))
 			}
 			previousStatus = status
 			time.Sleep(1 * time.Second)
@@ -462,7 +635,7 @@ func main() {
 		}
 
 		if err := assertOK(output); err != nil {
-			fmt.Fprintf(os.Stderr, "Error initiating scan: %v\n", err)
+			fmt.Fprintf(os.Stderr, "gError initiating scan: %v\n", err)
 			os.Exit(1)
 		}
 
