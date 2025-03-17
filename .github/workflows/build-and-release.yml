@@ -1,0 +1,84 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.20"
+          check-latest: true
+
+      - name: Get version
+        id: get_version
+        run: |
+          echo "VERSION=$(date +'v%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Build for Linux
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o wifi-linux-amd64 -ldflags="-s -w" .
+          GOOS=linux GOARCH=arm64 go build -o wifi-linux-arm64 -ldflags="-s -w" .
+          GOOS=linux GOARCH=arm go build -o wifi-linux-arm -ldflags="-s -w" .
+
+      - name: Build for macOS
+        run: |
+          GOOS=darwin GOARCH=amd64 go build -o wifi-macos-amd64 -ldflags="-s -w" .
+          GOOS=darwin GOARCH=arm64 go build -o wifi-macos-arm64 -ldflags="-s -w" .
+
+      - name: Build for Windows
+        run: |
+          GOOS=windows GOARCH=amd64 go build -o wifi-windows-amd64.exe -ldflags="-s -w" .
+          GOOS=windows GOARCH=386 go build -o wifi-windows-386.exe -ldflags="-s -w" .
+
+      - name: Archive binaries
+        run: |
+          mkdir -p releases
+          zip -j releases/wifi-linux-amd64.zip wifi-linux-amd64
+          zip -j releases/wifi-linux-arm64.zip wifi-linux-arm64
+          zip -j releases/wifi-linux-arm.zip wifi-linux-arm
+          zip -j releases/wifi-macos-amd64.zip wifi-macos-amd64
+          zip -j releases/wifi-macos-arm64.zip wifi-macos-arm64
+          zip -j releases/wifi-windows-amd64.zip wifi-windows-amd64.exe
+          zip -j releases/wifi-windows-386.zip wifi-windows-386.exe
+          zip -j releases/wifi-all.zip wifi-*
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            Automated release built on ${{ github.event.after }}
+
+            ## Binaries
+            - Linux (AMD64): wifi-linux-amd64.zip
+            - Linux (ARM64): wifi-linux-arm64.zip
+            - Linux (ARM): wifi-linux-arm.zip
+            - macOS (AMD64): wifi-macos-amd64.zip
+            - macOS (ARM64): wifi-macos-arm64.zip
+            - Windows (AMD64): wifi-windows-amd64.zip
+            - Windows (386): wifi-windows-386.zip
+            - All platforms: wifi-all.zip
+          files: |
+            releases/wifi-linux-amd64.zip
+            releases/wifi-linux-arm64.zip
+            releases/wifi-linux-arm.zip
+            releases/wifi-macos-amd64.zip
+            releases/wifi-macos-arm64.zip
+            releases/wifi-windows-amd64.zip
+            releases/wifi-windows-386.zip
+            releases/wifi-all.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

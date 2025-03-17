@@ -14,54 +14,18 @@ import (
 	"time"
 )
 
-func wpaCli(args ...string) string {
-	wpaCliArgs := append([]string{"wpa_cli"}, args...)
-	fmt.Println("» wpa_cli", strings.Join(args, " "))
-
-	cmd := exec.Command("as-host", wpaCliArgs...)
-
-	output, err := cmd.Output()
-	if err != nil {
-		panic(err)
-	}
-
-	return string(output)
+// Network represents a WiFi network
+type Network struct {
+	shortCode   string
+	bssid       string
+	frequency   string
+	signalLevel int
+	flags       map[string]bool
+	isSecured   bool
+	ssid        string
 }
 
-func removeEmptyLines(input []string) []string {
-	output := []string{}
-
-	for i := range input {
-		if len(strings.Trim(input[i], " ")) > 0 {
-			output = append(output, input[i])
-		}
-	}
-
-	return output
-}
-
-func lastLine(input string) string {
-	lines := removeEmptyLines(strings.Split(input, "\n"))
-	return lines[len(lines)-1]
-}
-
-func assertOK(input string) {
-	line := lastLine(input)
-	if line != "OK" {
-		panic(line)
-	}
-}
-
-func escapeString(input string) string {
-	input = strings.ReplaceAll(input, "\\", "\\\\")
-	input = strings.ReplaceAll(input, "'", "\\'")
-	input = strings.ReplaceAll(input, "(", "\\(")
-	input = strings.ReplaceAll(input, ")", "\\)")
-	input = strings.ReplaceAll(input, "&", "\\&")
-	input = strings.ReplaceAll(input, "$", "\\$")
-	return input
-}
-
+// SavedNetwork represents a WiFi network saved in the configuration
 type SavedNetwork struct {
 	networkId int
 	ssid      string
@@ -69,17 +33,126 @@ type SavedNetwork struct {
 	flags     map[string]bool
 }
 
-func parseListNetworkResults(input string) []SavedNetwork {
+// Execute wpa_cli command with the provided arguments
+func wpaCli(args ...string) (string, error) {
+	wpaCliArgs := append([]string{"wpa_cli"}, args...)
+	fmt.Println("» wpa_cli", strings.Join(args, " "))
+
+	cmd := exec.Command("as-host", wpaCliArgs...)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("wpa_cli error: %w", err)
+	}
+
+	return string(output), nil
+}
+
+// removeEmptyLines removes empty lines from a slice of strings
+func removeEmptyLines(input []string) []string {
+	output := []string{}
+
+	for _, line := range input {
+		if len(strings.TrimSpace(line)) > 0 {
+			output = append(output, line)
+		}
+	}
+
+	return output
+}
+
+// lastLine gets the last non-empty line from the input string
+func lastLine(input string) string {
+	lines := removeEmptyLines(strings.Split(input, "\n"))
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[len(lines)-1]
+}
+
+// assertOK checks if the last line of the input is "OK"
+func assertOK(input string) error {
+	line := lastLine(input)
+	if line != "OK" {
+		return fmt.Errorf("expected OK, got: %s", line)
+	}
+	return nil
+}
+
+// escapeString escapes special characters in a string
+func escapeString(input string) string {
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"\\", "\\\\"},
+		{"'", "\\'"},
+		{"(", "\\("},
+		{")", "\\)"},
+		{"&", "\\&"},
+		{"$", "\\$"},
+	}
+
+	result := input
+	for _, r := range replacements {
+		result = strings.ReplaceAll(result, r.old, r.new)
+	}
+	return result
+}
+
+// parseNetworkFlags parses network flags from a string
+func parseNetworkFlags(input string) map[string]bool {
+	flagMap := map[string]bool{}
+	list := strings.Split(strings.Trim(input, "[]"), "][")
+	for _, flag := range list {
+		if flag != "" {
+			flagMap[flag] = true
+		}
+	}
+	return flagMap
+}
+
+// isNetworkSecured checks if a network is secured
+func isNetworkSecured(flags map[string]bool) bool {
+	for key := range flags {
+		if strings.HasPrefix(key, "WPA2-") || strings.HasPrefix(key, "WPA-") || strings.HasPrefix(key, "RSN-") {
+			return true
+		}
+	}
+	return false
+}
+
+// getShortCode generates a short code for a network SSID
+func getShortCode(input string) (string, error) {
+	hash := sha256.New()
+	if _, err := hash.Write([]byte(input)); err != nil {
+		return "", err
+	}
+	shortCode := fmt.Sprintf("%x", hash.Sum(nil))[0:3]
+	return shortCode, nil
+}
+
+// parseListNetworkResults parses the output of list_network command
+func parseListNetworkResults(input string) ([]SavedNetwork, error) {
 	networks := []SavedNetwork{}
-	lines := removeEmptyLines(strings.Split(input, "\n")[2:])
-	for i := range lines {
-		line := lines[i]
+	lines := removeEmptyLines(strings.Split(input, "\n"))
+
+	// Need at least 3 lines (including header) to have valid data
+	if len(lines) < 3 {
+		return networks, nil
+	}
+
+	for _, line := range lines[2:] {
 		chunks := strings.Split(line, "\t")
+		if len(chunks) < 4 {
+			continue
+		}
+
 		flags := parseNetworkFlags(chunks[3])
 
 		networkId, err := strconv.Atoi(chunks[0])
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("invalid network ID: %s", chunks[0])
 		}
 
 		ssid := chunks[1]
@@ -92,63 +165,35 @@ func parseListNetworkResults(input string) []SavedNetwork {
 			flags:     flags,
 		})
 	}
-	return networks
+	return networks, nil
 }
 
-type Network struct {
-	shortCode   string
-	bssid       string
-	frequency   string
-	signalLevel int
-	flags       map[string]bool
-	isSecured   bool
-	ssid        string
-}
-
-func isNetworkSecured(flags map[string]bool) bool {
-	for key := range flags {
-		if strings.HasPrefix(key, "WPA2-") || strings.HasPrefix(key, "WPA-") || strings.HasPrefix(key, "RSN-") {
-			return true
-		}
-	}
-	return false
-}
-
-func getShortCode(input string) (shortCode string, err error) {
-	hash := sha256.New()
-	if _, err = hash.Write([]byte(input)); err != nil {
-		return "", err
-	}
-	shortCode = fmt.Sprintf("%x", hash.Sum(nil))[0:3]
-	return shortCode, nil
-}
-
-func parseNetworkFlags(input string) map[string]bool {
-	flagMap := map[string]bool{}
-	list := strings.Split(strings.Trim(input, "[]"), "][")
-	for i := range list {
-		flag := list[i]
-		flagMap[flag] = true
-	}
-	return flagMap
-}
-
-func parseScanResults(input string) []Network {
+// parseScanResults parses the output of scan_results command
+func parseScanResults(input string) ([]Network, error) {
 	networks := []Network{}
-	lines := removeEmptyLines(strings.Split(input, "\n")[2:])
-	for i := range lines {
-		line := lines[i]
+	lines := removeEmptyLines(strings.Split(input, "\n"))
+
+	// Need at least 3 lines (including header) to have valid data
+	if len(lines) < 3 {
+		return networks, nil
+	}
+
+	for _, line := range lines[2:] {
 		chunks := strings.Split(line, "\t")
+		if len(chunks) < 5 {
+			continue
+		}
+
 		flags := parseNetworkFlags(chunks[3])
 
 		signalLevel, err := strconv.Atoi(chunks[2])
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("invalid signal level: %s", chunks[2])
 		}
 
 		shortCode, err := getShortCode(chunks[4])
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("failed to generate short code: %w", err)
 		}
 
 		networks = append(networks, Network{
@@ -161,25 +206,40 @@ func parseScanResults(input string) []Network {
 			ssid:        chunks[4],
 		})
 	}
+
+	// Sort networks by signal level (strongest first)
 	sort.Slice(networks, func(p, q int) bool {
 		return networks[p].signalLevel > networks[q].signalLevel
 	})
-	return networks
+
+	return networks, nil
 }
 
 var isShortCodeRegExp = regexp.MustCompile("^[A-f0-9]{3}$")
 
+// isShortCode checks if a string is a valid short code
 func isShortCode(input string) bool {
 	return isShortCodeRegExp.MatchString(input)
 }
+
+// resolveShortCode resolves a short code to an SSID
 func resolveShortCode(shortCode string) (string, error) {
-	networks := parseScanResults(wpaCli("scan_results"))
+	output, err := wpaCli("scan_results")
+	if err != nil {
+		return "", err
+	}
+
+	networks, err := parseScanResults(output)
+	if err != nil {
+		return "", err
+	}
+
 	for _, network := range networks {
 		if network.shortCode == shortCode {
 			return network.ssid, nil
 		}
 	}
-	return "", errors.New("Could not resolve shortCode")
+	return "", errors.New("could not resolve shortCode")
 }
 
 func main() {
@@ -195,12 +255,23 @@ func main() {
 
 	switch command {
 	case "status":
-		fmt.Print(wpaCli("status"))
+		output, err := wpaCli("status")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(output)
 
 	case "watch":
 		previousStatus := ""
 		for {
-			status := wpaCli("status")
+			status, err := wpaCli("status")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
 			if status != previousStatus {
 				fmt.Print(status)
 			}
@@ -209,7 +280,18 @@ func main() {
 		}
 
 	case "list":
-		networkList := parseListNetworkResults(wpaCli("list_network"))
+		output, err := wpaCli("list_network")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		networkList, err := parseListNetworkResults(output)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing network list: %v\n", err)
+			os.Exit(1)
+		}
+
 		for _, network := range networkList {
 			status := " "
 			if network.flags["DISABLED"] {
@@ -221,72 +303,185 @@ func main() {
 			fmt.Printf(" %s %3d %s\n", status, network.networkId, network.ssid)
 		}
 
-	case "disable":
-		networkId := os.Args[2]
-		fmt.Print(wpaCli("disable_network", networkId))
+	case "disable", "enable", "remove":
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Error: missing network ID\n")
+			os.Exit(1)
+		}
 
-	case "enable":
-		networkId := os.Args[2]
-		fmt.Print(wpaCli("enable_network", networkId))
+		networkId := args[1]
+		output, err := wpaCli(command+"_network", networkId)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(output)
 
-  case "disconnect":
-    networkId := os.Args[2]
-		fmt.Print(wpaCli("disable_network", networkId))
-    time.Sleep(1 * time.Second)
-		fmt.Print(wpaCli("enable_network", networkId))
+	case "disconnect":
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Error: missing network ID\n")
+			os.Exit(1)
+		}
 
-	case "remove":
-		networkId := os.Args[2]
-		fmt.Print(wpaCli("remove_network", networkId))
+		networkId := args[1]
+		output, err := wpaCli("disable_network", networkId)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(output)
+
+		time.Sleep(1 * time.Second)
+
+		output, err = wpaCli("enable_network", networkId)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(output)
 
 	case "toggle":
-		networkId := os.Args[2]
-		networkList := parseListNetworkResults(wpaCli("list_network"))
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Error: missing network ID\n")
+			os.Exit(1)
+		}
+
+		networkId := args[1]
+		output, err := wpaCli("list_network")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		networkList, err := parseListNetworkResults(output)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing network list: %v\n", err)
+			os.Exit(1)
+		}
+
 		for _, network := range networkList {
 			if strconv.Itoa(network.networkId) == networkId {
+				var output string
+				var err error
+
 				if network.flags["DISABLED"] {
-					fmt.Print(wpaCli("enable_network", networkId))
+					output, err = wpaCli("enable_network", networkId)
 				} else {
-					fmt.Print(wpaCli("disable_network", networkId))
+					output, err = wpaCli("disable_network", networkId)
 				}
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Print(output)
+				break
 			}
 		}
 
 	case "add":
-		networkId := lastLine(wpaCli("add_network"))
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Error: missing SSID\n")
+			os.Exit(1)
+		}
 
-		ssid := os.Args[2]
+		output, err := wpaCli("add_network")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		networkId := lastLine(output)
+		ssid := args[1]
 
 		if isShortCode(ssid) {
-			resolveddShortCode, err := resolveShortCode(ssid)
+			resolvedShortCode, err := resolveShortCode(ssid)
 			if err != nil {
-				panic(err)
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
 			}
-			ssid = resolveddShortCode
+			ssid = resolvedShortCode
 		}
 
 		escapedSsid := escapeString(ssid)
-
-		assertOK(
-			wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", escapedSsid)))
-
-		if len(os.Args) == 3 {
-			assertOK(wpaCli("set_network", networkId, "key_mgmt", "NONE"))
-		} else {
-			psk := escapeString(os.Args[3])
-			assertOK(wpaCli("set_network", networkId, "psk", fmt.Sprintf("\\\"%s\\\"", psk)))
+		output, err = wpaCli("set_network", networkId, "ssid", fmt.Sprintf("\\\"%s\\\"", escapedSsid))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 
-		assertOK(wpaCli("enable_network", networkId))
-		assertOK(wpaCli("save"))
+		if err := assertOK(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error setting SSID: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(args) == 2 {
+			output, err = wpaCli("set_network", networkId, "key_mgmt", "NONE")
+		} else {
+			psk := escapeString(args[2])
+			output, err = wpaCli("set_network", networkId, "psk", fmt.Sprintf("\\\"%s\\\"", psk))
+		}
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := assertOK(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error setting key: %v\n", err)
+			os.Exit(1)
+		}
+
+		output, err = wpaCli("enable_network", networkId)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := assertOK(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error enabling network: %v\n", err)
+			os.Exit(1)
+		}
+
+		output, err = wpaCli("save")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := assertOK(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "scan":
-		assertOK(wpaCli("scan"))
-		networks := parseScanResults(wpaCli("scan_results"))
+		output, err := wpaCli("scan")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
-		for i := range networks {
-			network := networks[i]
+		if err := assertOK(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error initiating scan: %v\n", err)
+			os.Exit(1)
+		}
 
+		// Wait a moment for the scan to complete
+		time.Sleep(2 * time.Second)
+
+		output, err = wpaCli("scan_results")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		networks, err := parseScanResults(output)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing scan results: %v\n", err)
+			os.Exit(1)
+		}
+
+		for _, network := range networks {
 			if filterByOpen && network.isSecured {
 				continue
 			}
@@ -313,14 +508,18 @@ func main() {
 		}
 
 		fmt.Println("wifi <command>")
-		fmt.Println("     status")
-		fmt.Println("     watch")
-		fmt.Println("     scan")
-		fmt.Println("     add")
-		fmt.Println("     remove")
-		fmt.Println("     list")
-		fmt.Println("     disable")
-		fmt.Println("     enable")
-		fmt.Println("     toggle")
+		fmt.Println("     status    - Show current WiFi connection status")
+		fmt.Println("     watch     - Monitor WiFi connection status changes")
+		fmt.Println("     scan      - Scan for available WiFi networks")
+		fmt.Println("     add       - Add a new WiFi network (SSID [password])")
+		fmt.Println("     remove    - Remove a saved WiFi network (network_id)")
+		fmt.Println("     list      - List saved WiFi networks")
+		fmt.Println("     disable   - Disable a saved WiFi network (network_id)")
+		fmt.Println("     enable    - Enable a saved WiFi network (network_id)")
+		fmt.Println("     toggle    - Toggle enabled/disabled state (network_id)")
+		fmt.Println("     disconnect- Disconnect and reconnect a network (network_id)")
+		fmt.Println("")
+		fmt.Println("Options:")
+		fmt.Println("     --open    - Filter to show only open networks during scan")
 	}
 }
