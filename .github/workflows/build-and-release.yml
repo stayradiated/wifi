@@ -23,6 +23,9 @@ jobs:
         run: |
           echo "VERSION=$(date +'v%Y.%m.%d-%H%M')" >> $GITHUB_OUTPUT
 
+      - name: Install dependencies
+        run: go mod tidy
+
       - name: Build for Linux
         run: |
           GOOS=linux GOARCH=amd64 go build -o wifi-linux-amd64 -ldflags="-s -w" .
